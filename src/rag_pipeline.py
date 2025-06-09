@@ -1,6 +1,6 @@
 import json
-from config import MOCK_DATABASE
-from invoice_processor import execute_prompt
+from .config import MOCK_DATABASE
+from .invoice_processor import execute_prompt
 
 
 def query_rag(image_paths, query_text=None):

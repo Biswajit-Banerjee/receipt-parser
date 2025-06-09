@@ -1,9 +1,10 @@
-from config import MODEL, EMBEDDING_MODEL, SYSTEM_PROMPT
-from invoice_processor import extract_text_from_pdf, clean_and_parse_json, execute_prompt
 from pdf2image import convert_from_path
+import gradio as gr
 import json
 import os 
-from config import SYSTEM_PROMPT, MOCK_DATABASE
+from .config import SYSTEM_PROMPT, MOCK_DATABASE
+from .invoice_processor import extract_text_from_pdf, clean_and_parse_json, execute_prompt
+
 
 def pdf_to_images(pdf_path, temp_dir):
     image_paths = []
@@ -61,15 +62,19 @@ def query_rag(image_paths, query_text=None):
     
     return execute_prompt(messages)
     
-def process_pdf(pdf_file):
+def process_pdf(pdf_file, progress=None):
+    if progress is None:
+        progress = gr.Progress()
     
     # Use a temporary directory that automatically cleans up after itself
     temp_dir = os.path.join("temp", os.path.basename(pdf_file)[:-4])
     os.makedirs(temp_dir, exist_ok=True)
     
+    progress(0.1, desc="Extracting images from PDFs...")
     image_paths = pdf_to_images(pdf_file, temp_dir)
     invoice_text = extract_text_from_pdf(pdf_file)
     
+    progress(0.4, desc="Querying RAG to fetch vendor information...")
     retrieved_vendor_info = query_rag(image_paths)
     
     parsing_query = "\n".join([
@@ -86,6 +91,7 @@ def process_pdf(pdf_file):
         {'role': 'user', 'content': parsing_query, 'images': image_paths}
     ]
     
+    progress(0.7, desc="Parsing the document...")
     raw_content = execute_prompt(messages)
     
     structured_data = clean_and_parse_json(raw_content)

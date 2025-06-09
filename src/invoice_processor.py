@@ -12,7 +12,7 @@ from datetime import datetime
 import time
 from pprint import pprint
 
-from config import MODEL, SYSTEM_PROMPT
+from .config import MODEL, SYSTEM_PROMPT
 
 def clean_and_parse_json(raw_content: str) -> dict:
     # Remove potential markdown code blocks
