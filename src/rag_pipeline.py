@@ -1,58 +1,47 @@
-# rag_pipeline.py
+import json
+from config import MOCK_DATABASE
+from invoice_processor import execute_prompt
 
-from llama_index.core import Document, VectorStoreIndex
-from llama_index.core.settings import Settings
-from llama_index.llms.ollama import Ollama
-from llama_index.embeddings.ollama import OllamaEmbedding
 
-# This is the "database" that the RAG system will have knowledge of.
-MOCK_DATABASE = {
-  "123-ABC": {
-    "canonical_name": "XPO Logistics, Inc.",
-    "aliases": ["XPO Logistics", "RXO Logistics"]
-  },
-  "456-DEF": {
-    "canonical_name": "Global Tech Partners LLC",
-    "aliases": ["Global Tech", "GTP"]
-  },
-  "789-GHI": {
-    "canonical_name": "Stellapps",
-    "aliases": ["Stellapps Technologies", "Boon AI"]
-  }
-}
+def query_rag(image_paths, query_text=None):
 
-def create_knowledge_base(db: dict) -> list[Document]:
-    """Converts the mock database into a list of Document objects for LlamaIndex."""
-    knowledge_base = []
-    for db_id, data in db.items():
-        doc_text = (
-            f"Database ID: {db_id}\n"
-            f"Company Name: {data['canonical_name']}\n"
-            f"Known Aliases: {', '.join(data['aliases'])}"
-        )
-        knowledge_base.append(Document(text=doc_text))
-    return knowledge_base
+    db_string = json.dumps(MOCK_DATABASE, indent=2)
 
-class SimpleRAG:
-    """A simple, reusable class for the RAG pipeline."""
-    def __init__(self, llm_model: str, embedding_model: str):
-        print("Initializing RAG pipeline...")
-        Settings.llm = Ollama(model=llm_model)
-        Settings.embed_model = OllamaEmbedding(model_name=embedding_model)
+    system_prompt = f"""
+    You are a specialized entity resolution system. Your sole task is to analyze a user's query, which may come from text or an image, and find the corresponding official entity in the provided JSON database.
 
-        knowledge_base = create_knowledge_base(MOCK_DATABASE)
-        
-        print("Creating vector index from knowledge base... (This might take a moment the first time)")
-        self.index = VectorStoreIndex.from_documents(knowledge_base)
+    **Database of Known Entities:**
+    ```json
+    {db_string}
+    ```
 
-        print("Creating query engine...")
-        self.query_engine = self.index.as_query_engine()
-        
-        print("RAG Pipeline is ready.")
+    **Your Instructions:**
 
-    def find_vendor_details(self, extracted_vendor_name: str) -> str:
-        """Uses RAG to find the canonical vendor details."""
-        print(f"RAG: Searching for vendor '{extracted_vendor_name}'...")
-        query = f"Provide all details for the company named '{extracted_vendor_name}'. If you find a match, respond with the full text from your knowledge base. If not, respond with 'No match found.'"
-        response = self.query_engine.query(query)
-        return str(response)
+    1.  **Analyze the Query**: The user will provide a name or a document. Extract the most likely name of the organization they are referring to.
+    2.  **Search the Database**: Compare the extracted name against the "canonical_name" and "aliases" fields in the database. The match might not be perfect, so find the most plausible entry.
+    3.  **Format the Output**: You MUST respond with a single JSON object.
+
+        * **If a match is found**, the JSON object should contain:
+            - "status": "FOUND"
+            - "id": The unique ID of the matched entity (e.g., "111-JKL").
+            - "canonical_name": The official name from the database.
+            - "searched_term": The term you extracted from the user's query.
+
+        * **If no match is found**, the JSON object should contain:
+            - "status": "NOT_FOUND"
+            - "searched_term": The term you extracted but could not match.
+
+    **IMPORTANT**: Use ONLY the information in the provided database. Do not use your own knowledge about any companies. Your entire world is the database above.
+    """
+
+    # The user's message is now just the raw input.
+    # The detailed instructions are all in the system prompt.
+    user_content = query_text if query_text else "Please identify the vendor in the attached image."
+    
+    messages = [
+        {'role': 'system', 'content': system_prompt},
+        {'role': 'user', 'content': user_content, 'images': image_paths}
+    ]
+    
+    return execute_prompt(messages)
+    
