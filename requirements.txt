@@ -1,0 +1,8 @@
+gradio
+pypdf
+pdf2image
+Pillow
+ollama
+llama-index
+llama-index-llms-ollama
+llama-index-embeddings-ollama
