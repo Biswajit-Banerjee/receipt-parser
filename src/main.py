@@ -95,10 +95,8 @@ def process_pdf(pdf_file, progress=None):
     raw_content = execute_prompt(messages)
     
     structured_data = clean_and_parse_json(raw_content)
-    
-    # shutil.rmtree(temp_dir)
-    
-    return structured_data
+
+    return structured_data, image_paths
 
 
 if __name__ == "__main__":

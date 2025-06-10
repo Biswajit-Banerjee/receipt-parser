@@ -1,15 +1,7 @@
 import gradio as gr
 import ollama
-import pypdf
-import os
 import json
-import re
-from PIL import Image
-from pdf2image import convert_from_path
-import tempfile
-import shutil
 from datetime import datetime 
-import time
 
 from src.main import process_pdf
 from src.config import MODEL, SYSTEM_PROMPT
@@ -40,7 +32,7 @@ def format_json_display(json_data: dict) -> str:
 
     html += "<div class='grid-container'>"
     html += f"<div class='grid-item'><h3>Billed To</h3><p><strong>{json_data.get('customer_name', 'N/A')}</strong></p><p>{json_data.get('customer_address', '')}</p></div>"
-    html += f"<div class='grid-item'><h3>From</h3><p><strong>{json_data.get('vendor_name', 'N/A')}</strong></p><p>{json_data.get('vendor_address', '')}</p></div>"
+    html += f"<div class='grid-item'><h3>From</h3><p><strong>{json_data.get('vendor_name', 'N/A')}</strong></p><p>{json_data.get('vendor_id', 'id')}</p><p>{json_data.get('vendor_address', '')}</p></div>"
     html += "</div>"
     
     html += "<div class='details-grid'>"
@@ -65,16 +57,16 @@ def format_json_display(json_data: dict) -> str:
     return html
 
 def initial_process_pdf(pdf_file, progress=gr.Progress()):
-    """Phase 1: Processes PDF, gets initial JSON, returns data and makes UI visible."""
+    
     if pdf_file is None:
-        return None, [], None, gr.update(visible=False), format_json_display({})
+        return None, [], None, gr.update(visible=True), format_json_display({})
     
     try:
-        structured_data = process_pdf(pdf_file, progress)
+        structured_data, image_paths = process_pdf(pdf_file, progress)
         formatted_display = format_json_display(structured_data)
         progress(1, desc="Parsing complete!")
         initial_chatbot_message = [(None, "I've analyzed the document. You can now ask me to refine or query the results.")]
-        return structured_data, [], initial_chatbot_message, gr.update(visible=True), formatted_display
+        return structured_data, image_paths, initial_chatbot_message, gr.update(visible=True), formatted_display
     
     except Exception as e:
         raise gr.Error(f"Failed to call Ollama or parse its response: {e}")
@@ -85,26 +77,26 @@ def handle_chat_message(user_message: str, chat_history: list, image_paths: list
         return "", chat_history, format_json_display(current_json), current_json
 
     chat_history.append((user_message, None))
-    chat_prompt = f"""You are a helpful assistant analyzing an invoice. You have already extracted this JSON:
---- INITIAL JSON ---
-{json.dumps(current_json, indent=2)}
---- END INITIAL JSON ---
-The user has a follow-up question. Based on the attached invoice image(s) and the initial JSON, provide a concise answer.
-IMPORTANT: If the user asks you to change, correct, or update the data, you MUST provide the complete, updated JSON structure within a ```json ... ``` code block in your response.
+    chat_prompt = "\n".join([
+        "You are a helpful assistant analyzing an invoice. You have already extracted this JSON:",
+        f"--- INITIAL JSON ---\n{json.dumps(current_json, indent=2)}--- END INITIAL JSON ---",
+        "The user has a follow-up question. Based on the attached invoice image(s) and the initial JSON, provide a concise answer.",
+        "IMPORTANT: If the user asks you to change, correct, or update the data, you MUST provide the complete, updated JSON structure within a ```json ... ``` code block in your response.",
+        f"User's question: '{user_message}'"
+    ])
 
-User's question: "{user_message}"
-"""
     try:
         response = ollama.chat(model=MODEL, messages=[{'role': 'user', 'content': chat_prompt, 'images': image_paths}])
         assistant_response = response['message']['content']
-        chat_history[-1] = (user_message, assistant_response)
+        chat_history[-1] = (user_message, "Done")
         
         try:
             updated_json_data = clean_and_parse_json(assistant_response)
-            print("Chat updated the JSON.")
             return "", chat_history, format_json_display(updated_json_data), updated_json_data
+        
         except (ValueError, json.JSONDecodeError):
             return "", chat_history, format_json_display(current_json), current_json
+    
     except Exception as e:
         chat_history[-1] = (user_message, f"Sorry, an error occurred: {e}")
         return "", chat_history, format_json_display(current_json), current_json
@@ -142,41 +134,33 @@ body, .gradio-container { background-color: #0d1117; color: #c9d1d9; }
 
 """
 
-with gr.Blocks(theme=gr.themes.Base(), css=night_mode_css, title="Interactive Invoice Parser") as demo:
+with gr.Blocks(theme=gr.themes.Base(), css=night_mode_css, title="Interactive Invoice Parser") as demo: #  
     image_paths_state = gr.State([])
     json_state = gr.State({})
 
     with gr.Column(elem_classes="main-column"):
-        gr.Markdown(f"# 📄 Interactive Invoice Parser\nUpload a PDF to start a conversation with **{MODEL}**.")
+        gr.Markdown(f"# Interactive Invoice Parser\nUpload a PDF to start a conversation with **{MODEL}**.")
         
         with gr.Group(elem_classes="dark-group"):
             pdf_upload = gr.File(label="Upload PDF Invoice", file_types=[".pdf"])
-            process_button = gr.Button("🚀 Process Invoice", variant="primary")
+            process_button = gr.Button("Process Invoice", variant="primary")
 
-        with gr.Row(visible=False, elem_classes="results-chat-area") as results_and_chat_area:
+        with gr.Row(visible=True, elem_classes="results-chat-area") as results_and_chat_area:
             with gr.Column(scale=2, elem_classes="view-column dark-group"):
-                gr.Markdown("### 📊 Extracted Data")
+                gr.Markdown("### Extracted Data")
                 with gr.Tabs():
-                    with gr.TabItem("📋 Formatted View"):
+                    with gr.TabItem("Formatted View"):
                         formatted_output = gr.HTML()
-                    with gr.TabItem("🔧 Raw JSON"):
+                    with gr.TabItem("Raw JSON"):
                         json_output_raw = gr.JSON()
 
             with gr.Column(scale=1, elem_classes="chat-column dark-group"):
-                gr.Markdown("### 💬 Interactive Chat")
-                chatbot = gr.Chatbot(height=500, bubble_full_width=False, avatar_images=("./user.png", "./bot.png"))
+                gr.Markdown("### Interactive Chat")
+                
+                chatbot = gr.Chatbot(height=800, avatar_images=("/home/sumon/workspace/git_repos/receipt-parser/images/user.png", "/home/sumon/workspace/git_repos/receipt-parser/images/shape.png"))
                 chat_textbox = gr.Textbox(placeholder="e.g., Change the vendor name...", show_label=False)
 
     def process_pdf_and_update_ui(pdf_file, progress=gr.Progress()):
-        total_wait_time = 32  # seconds
-        steps = 4  # number of progress updates
-        step_duration = total_wait_time / steps
-    
-        for i in range(steps):
-            progress(i / steps, desc=f"Processing... {int((i / steps) * 100)}%")
-            time.sleep(step_duration)
-    
-        # Actual processing starts after simulated wait
         json_data, image_paths, initial_chat, visibility_update, formatted_html = initial_process_pdf(pdf_file, progress)
         return json_data, image_paths, initial_chat, visibility_update, formatted_html, json_data
     
@@ -197,7 +181,7 @@ with gr.Blocks(theme=gr.themes.Base(), css=night_mode_css, title="Interactive In
     )
     
     def clear_all_ui():
-        return None, gr.update(visible=False), None, format_json_display({}), {}, []
+        return None, gr.update(visible=True), None, format_json_display({}), {}, []
 
     pdf_upload.clear(
         fn=clear_all_ui,
